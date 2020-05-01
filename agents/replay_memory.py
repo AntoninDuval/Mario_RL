@@ -1,90 +1,58 @@
+from collections import namedtuple, deque
+import random
 import torch
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
-import random
 
-class ReplayMemory(Dataset):
-    """Rolling replay memory: arrays are initialized at full length but elements are inserted at current head cursor.
-    Writing is rolling, meaning that when head reaches the maximum length of arrays, it cycles back to the beginning
-    and overwrites old elements."""
 
-    def __init__(self, max_len, observation_space, action_space):
-        self.max_len = max_len
-        self.observation_space = observation_space
-        self.action_space = action_space
+class Replay_Buffer(object):
+    """Replay buffer to store past experiences that the agent can then use for training data"""
 
-        # Initializing zero-arrays of full length
-        self.states = torch.zeros(max_len, dtype=torch.float32)
-        self.actions = torch.zeros(max_len, dtype=torch.float32)
-        self.rewards = torch.zeros(max_len, dtype=torch.float32)
-        self.new_states = torch.zeros(max_len, dtype=torch.float32)
-        self.dones = torch.zeros(max_len, dtype=bool)
+    def __init__(self, buffer_size, batch_size, seed):
 
-        # None of them require gradient computation, save some resources:
-        self.states.requires_grad = False
-        self.actions.requires_grad = False
-        self.rewards.requires_grad = False
-        self.new_states.requires_grad = False
-        self.dones.requires_grad = False
+        self.memory = deque(maxlen=buffer_size)
+        self.batch_size = batch_size
+        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
+        self.seed = random.seed(seed)
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        # Current writing head in memory
-        self.head = 0
+    def add_experience(self, states, actions, rewards, next_states, dones):
+        """Adds experience(s) into the replay buffer"""
+        if type(dones) == list:
+            assert type(dones[0]) != list, "A done shouldn't be a list"
+            experiences = [self.experience(state, action, reward, next_state, done)
+                           for state, action, reward, next_state, done in
+                           zip(states, actions, rewards, next_states, dones)]
+            self.memory.extend(experiences)
+        else:
+            experience = self.experience(states, actions, rewards, next_states, dones)
+            self.memory.append(experience)
 
-        # Current quantity of elements added to the memory ; will saturate at 'max_len'
-        self.fill = 0
+    def sample(self, num_experiences=None, separate_out_data_types=True):
+        """Draws a random sample of experience from the replay buffer"""
+        experiences = self.pick_experiences(num_experiences)
+        if separate_out_data_types:
+            states, actions, rewards, next_states, dones = self.separate_out_data_types(experiences)
+            return states, actions, rewards, next_states, dones
+        else:
+            return experiences
+
+    def separate_out_data_types(self, experiences):
+        """Puts the sampled experience into the correct format for a PyTorch neural network"""
+        states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(self.device)
+        actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(self.device)
+        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(self.device)
+        next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(
+            self.device)
+        dones = torch.from_numpy(np.vstack([int(e.done) for e in experiences if e is not None])).float().to(self.device)
+
+        return states, actions, rewards, next_states, dones
+
+    def pick_experiences(self, num_experiences=None):
+        if num_experiences is not None:
+            batch_size = num_experiences
+        else:
+            batch_size = self.batch_size
+        return random.sample(self.memory, k=batch_size)
 
     def __len__(self):
-        """Retrieves the length of the replay memory (only available entries)"""
-        return self.fill
-
-    def __getitem__(self, idx):
-        """Retrieves item at given index or list of indices.
-        :param idx: integer, list of integers or integer tensor
-        :return tuple containing the slices of replay memory arrays at given indices"""
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-        return self.states[idx], self.actions[idx], self.rewards[idx], self.new_states[idx], self.dones[idx]
-
-    def random_access(self, n):
-        """Retrieves n random elements from replay memory.
-        :param n: number of elements to retrieve
-        :return tuple : states, agent_states, actions, rewards, new_states, new_agent_states, dones ; random corresponding slices of replay memory arrays"""
-        indices = random.sample(range(len(self)), n)
-        return self[indices]
-
-    def _extend_unsafe(self, state, action, reward, new_state, done):
-        """PRIVATE | Extends current memory with given arrays, up to 'add' elements.
-        Unsafe: no length check. This function shouldn't be called from outside this class.
-        :param states: world observations
-        :param actions: taken actions
-        :param rewards: received rewards
-        :param new_states: world observations after taking action
-        :param done: is episode done?
-        :param add: number of elements to add, from the beginning of passed arrays
-        """
-        begin = self.head
-        end = begin + 1
-        self.states[begin:end] = torch.from_numpy(state)
-        self.actions[begin:end] = torch.from_numpy(action)
-        self.rewards[begin:end] = torch.from_numpy(reward)
-        self.new_states[begin:end] = torch.from_numpy(new_state)
-        self.dones[begin:end] = done
-
-    def extend(self, state, action, reward, new_state, done):
-        """ Extends the replay memory with all given entries. Memory writing is rolling: when reaching
-        saturation, old elements are overwritten automatically.
-        :param states: 				ndarray[ _ , observation_space]		world observations
-        :param actions: 			ndarray[ _ , action_space]			taken actions
-        :param rewards: 			ndarray[ _ ]						received rewards
-        :param new_states: 			ndarray[ _ , observation_space] 	world observations after taking action
-        :param done: 				bool								is episode done?
-        """
-
-        # Add those elements
-        self._extend_unsafe(state, action, reward, new_state, done)
-
-        # Updating fill (how much space is left in the replay memory, before saturation)
-        self.fill = max(self.fill, min(self.max_len, self.head + 1))
-
-        # Updating head position, putting it back to 0 if reached max length
-        self.head = (self.head + 1) % self.max_len
+        return len(self.memory)
