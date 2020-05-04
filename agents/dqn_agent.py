@@ -10,8 +10,8 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from agents.replay_memory import Replay_Buffer
 
-REPLAY_MEMORY_SIZE = 128
-MIN_REPLAY_MEMORY_SIZE = 128
+REPLAY_MEMORY_SIZE = 100000
+MIN_REPLAY_MEMORY_SIZE = 10000
 MINIBATCH_SIZE = 128
 SEED=420
 
@@ -30,14 +30,21 @@ class DQNModel(nn.Module):
         self.convlayer2 = nn.Conv2d(64, 64, 2)
         self.convlayer3 = nn.Conv2d(64, 32, 2)
 
-        self.layer1 = nn.Linear(7072, 4)
+        self.layer1 = nn.Linear(7072, 3)
+        self.layer2 = nn.Linear(7073, 2)
 
     def forward(self, state):
-        x = F.leaky_relu(self.convlayer1(state.view(-1, 3, 16, 20)))
+        screen = state[0]
+        is_a_released = state[1].view(-1, 1)
+
+        x = F.leaky_relu(self.convlayer1(screen.view(-1, 3, 16, 20)))
         x = F.leaky_relu(self.convlayer2(x))
         x = F.leaky_relu(self.convlayer3(x))
-        output = self.layer1(x.view(-1, 7072))
-        return output
+
+        x = x.view(-1, 7072)
+        output_direction = self.layer1(x)
+        output_jump = self.layer2(torch.cat((x, is_a_released), 1))
+        return output_direction, output_jump
 
 class DQN_Agent(Agent):
     def __init__(self, epsilon=0.1, discount = 0.90, learning_rate=1e-4):
@@ -66,6 +73,7 @@ class DQN_Agent(Agent):
 
         self.criterion = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        #self.optimizer = torch.optim.RMSprop(self.model.parameters(), lr=self.learning_rate)
 
         if trained_model is not None:
             self.load_model(trained_model)
@@ -93,11 +101,15 @@ class DQN_Agent(Agent):
 
         with torch.no_grad():
             # Predict next action
-            next_qs = self.target_model(next_states).max(1)[0].unsqueeze(1)
-            Q_targets = rewards + (self.discount * next_qs * (1 - dones))
-        Q_expected = self.model(states).gather(1, actions.long())
+            next_qs_dir = self.target_model(next_states)[0].max(1)[0].unsqueeze(1)
+            next_qs_jump = self.target_model(next_states)[1].max(1)[0].unsqueeze(1)
+            Q_targets_dir = rewards + (self.discount * next_qs_dir * (1 - dones))
+            Q_targets_jump = rewards + (self.discount * next_qs_jump * (1 - dones))
 
-        loss = F.mse_loss(Q_expected, Q_targets)
+        Q_expected_dir = self.model(states)[0].gather(1, actions[:, 0].long().unsqueeze(1))
+        Q_expected_jump = self.model(states)[1].gather(1, actions[:, 1].long().unsqueeze(1))
+
+        loss = F.mse_loss(Q_expected_dir, Q_targets_dir) + F.mse_loss(Q_expected_jump, Q_targets_jump)
         self.optimizer.zero_grad()
         loss.backward()
 
@@ -122,12 +134,16 @@ class DQN_Agent(Agent):
         if random.random() > self.epsilon or not training:
             # Ask network for next action
             with torch.no_grad():
-                qs_action = self.target_model(state)
-                action_value, action_index = qs_action.max(1)
+                qs_action_dir, qs_action_jump = self.target_model(state)
+
+                action_value_dir, action_index_dir = qs_action_dir.max(1)
+                action_value_jump, action_index_jump = qs_action_jump.max(1)
         else:
             # Get a random action
-            action_index = random.randint(0, len(self.actions)-1)
-        return action_index
+            action_index_dir = random.randint(0, 1)
+            action_index_jump = random.randint(0, 1)
+    
+        return action_index_dir, action_index_jump
 
     def save_model(self, file_name: str):
         torch.save(self.model.state_dict(), './' + file_name)

@@ -11,21 +11,21 @@ from agents.random_agent import RandomAgent
 from agents.dqn_agent import DQN_Agent
 from agents.A2C import A2C_Agent
 
-TRAINING = True
+TRAINING = False
 SAVE_MODEL = False
 VISUALIZE = True
 N_EPOCHS = 200
-N_STEPS = 200
+N_STEPS = 10000
 
 use_model = None
-use_model = "1_5_9_dqn_agent.h5"
+use_model = "MVP_model.h5"
 
 def main():
     # Check if the ROM is given through argv
     filename = './Super_Mario_Land_World.gb'
     env = Environment(filename, max_steps=N_STEPS, visualize=VISUALIZE)
     env.start()
-    agent = DQN_Agent(discount=0.9, epsilon=0.9, learning_rate=1e-3)
+    agent = DQN_Agent(discount=0.9, epsilon=0.9, learning_rate=1e-5)
     avg_loss = None
     agent_is_setup = False
     min_epsilon = 0.05
@@ -38,7 +38,8 @@ def main():
         state = torch.Tensor(env.obs())
         old_state = state
         old_old_state = state
-        states = torch.cat((state, old_state, old_old_state), 1).view(3, 16, 20)
+        is_a_released = torch.ones(1)
+        states = [torch.cat((state, old_state, old_old_state), 0).view(3, 16, 20), is_a_released]
         episode_reward = 0
 
         if not agent_is_setup:
@@ -47,15 +48,24 @@ def main():
 
         for steps in range(N_STEPS):
             # Get action from agent
-            action = agent.get_action(states, TRAINING)
-            new_state, reward, done = env.step(action, steps)
+            actions = agent.get_action(states, TRAINING)
+            new_state, reward, done = env.step(actions)
 
-            #env.print_obs(new_state.numpy().astype('int64'))
+            #env.print_obs(new_state.numpy().astype(int))
+
+            if actions[1] == 0:
+                is_a_released = torch.zeros(1)
+            else:
+                is_a_released = torch.ones(1)
+
+            if steps+1 == N_STEPS:
+                done = True
+
             episode_reward += reward
 
-            new_states = torch.cat((new_state, states[0, :, :], states[1, :, :]), 1).view(3, 16, 20)
+            new_states = [torch.cat((new_state, states[0][0,:,:], states[0][1,:,:]),0).view(3,16,20), is_a_released]
 
-            agent.update_replay_memory(states.numpy(), action, reward, new_states.numpy(), done)
+            agent.update_replay_memory(states, actions, reward, new_states, done)
 
             # Train the neural network
             if TRAINING:
@@ -66,7 +76,6 @@ def main():
                     avg_loss = 0.99 * avg_loss + 0.01 * loss
             else:
                 avg_loss = 0
-            # Set obs to the new state
 
             states = new_states
 
@@ -76,11 +85,10 @@ def main():
                       "steps {}/{}".format(steps + 1, N_STEPS),
                       end="")
             if done:
-                print("")
-                print("Mario died")
+                print("\n", env.level_progress_max)
                 break
+
         agent.epsilon = max(min_epsilon, min(max_epsilon, 1.0 - math.log10((episode + 1) / 5)))
-        print('\n', 'Epsilon :', agent.epsilon)
     if SAVE_MODEL and TRAINING:
         date = datetime.datetime.now()
         model_name = str(date.day) + '_' + str(date.month) + '_' + str(date.hour) + '_' + agent.name + '.h5'
