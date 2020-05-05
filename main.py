@@ -13,12 +13,12 @@ from agents.A2C import A2C_Agent
 
 TRAINING = False
 SAVE_MODEL = False
-VISUALIZE = True
+VISUALIZE = False
 N_EPOCHS = 200
-N_STEPS = 10000
+N_STEPS = 800
 
 use_model = None
-use_model = "MVP_model.h5"
+use_model = "5_5_15_dqn_agent.h5"
 
 def main():
     # Check if the ROM is given through argv
@@ -28,8 +28,8 @@ def main():
     agent = DQN_Agent(discount=0.9, epsilon=0.9, learning_rate=1e-5)
     avg_loss = None
     agent_is_setup = False
-    min_epsilon = 0.05
-    max_epsilon = 0.05
+    min_epsilon = 0.001
+    max_epsilon = 0.001
 
 
     for episode in range(N_EPOCHS):
@@ -39,7 +39,7 @@ def main():
         old_state = state
         old_old_state = state
         is_a_released = torch.ones(1)
-        states = [torch.cat((state, old_state, old_old_state), 0).view(3, 16, 20), is_a_released]
+        states = [torch.cat((state, old_state, old_old_state), 0).view(3, 16, 20), is_a_released, env.mario_size]
         episode_reward = 0
 
         if not agent_is_setup:
@@ -49,6 +49,8 @@ def main():
         for steps in range(N_STEPS):
             # Get action from agent
             actions = agent.get_action(states, TRAINING)
+
+
             new_state, reward, done = env.step(actions)
 
             #env.print_obs(new_state.numpy().astype(int))
@@ -63,7 +65,7 @@ def main():
 
             episode_reward += reward
 
-            new_states = [torch.cat((new_state, states[0][0,:,:], states[0][1,:,:]),0).view(3,16,20), is_a_released]
+            new_states = [torch.cat((new_state, states[0][0,:,:], states[0][1,:,:]),0).view(3,16,20), is_a_released, env.mario_size]
 
             agent.update_replay_memory(states, actions, reward, new_states, done)
 

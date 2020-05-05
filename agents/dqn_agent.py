@@ -10,9 +10,9 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from agents.replay_memory import Replay_Buffer
 
-REPLAY_MEMORY_SIZE = 100000
-MIN_REPLAY_MEMORY_SIZE = 10000
-MINIBATCH_SIZE = 128
+REPLAY_MEMORY_SIZE = 10
+MIN_REPLAY_MEMORY_SIZE = 10
+MINIBATCH_SIZE = 10
 SEED=420
 
 UPDATE_TARGET_EVERY = 1
@@ -30,20 +30,21 @@ class DQNModel(nn.Module):
         self.convlayer2 = nn.Conv2d(64, 64, 2)
         self.convlayer3 = nn.Conv2d(64, 32, 2)
 
-        self.layer1 = nn.Linear(7072, 3)
-        self.layer2 = nn.Linear(7073, 2)
+        self.layer1 = nn.Linear(7073, 3)
+        self.layer2 = nn.Linear(7074, 2)
 
     def forward(self, state):
-        screen = state[0]
+        screen = state[0].view(-1, 3, 16, 20)
         is_a_released = state[1].view(-1, 1)
+        mario_size = state[2].view(-1, 1)
 
-        x = F.leaky_relu(self.convlayer1(screen.view(-1, 3, 16, 20)))
+        x = F.leaky_relu(self.convlayer1(screen))
         x = F.leaky_relu(self.convlayer2(x))
         x = F.leaky_relu(self.convlayer3(x))
 
         x = x.view(-1, 7072)
-        output_direction = self.layer1(x)
-        output_jump = self.layer2(torch.cat((x, is_a_released), 1))
+        output_direction = self.layer1(torch.cat((x, mario_size),1))
+        output_jump = self.layer2(torch.cat((x, is_a_released, mario_size), 1))
         return output_direction, output_jump
 
 class DQN_Agent(Agent):
@@ -135,7 +136,6 @@ class DQN_Agent(Agent):
             # Ask network for next action
             with torch.no_grad():
                 qs_action_dir, qs_action_jump = self.target_model(state)
-
                 action_value_dir, action_index_dir = qs_action_dir.max(1)
                 action_value_jump, action_index_jump = qs_action_jump.max(1)
         else:

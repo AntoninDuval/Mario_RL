@@ -63,9 +63,9 @@ class Environment:
         game_area = np.asarray(game_area).astype('int64')
 
         if 32 in game_area and 49 in game_area:
-            self.mario_size = 1
+            self.mario_size = torch.ones(1)
         else:
-            self.mario_size = 0
+            self.mario_size = torch.zeros(1)
 
         mario = np.arange(70)
         mario = np.delete(mario, [15, 31])
@@ -78,11 +78,12 @@ class Environment:
         obstacle = [368, 130, 369, 355, 370, 371, 383]
 
         game_area[np.isin(game_area, mario)] = 1
+        game_area[np.isin(game_area, mario)] = 1
         game_area[np.isin(game_area, background)] = 0
-        game_area[np.isin(game_area, ennemy)] = 2
-        game_area[np.isin(game_area, obstacle)] = 3
-        game_area[game_area == block_bonus] = 4
-        game_area[np.isin(game_area, floor)] = 3
+        game_area[np.isin(game_area, ennemy)] = 3
+        game_area[np.isin(game_area, obstacle)] = 4
+        game_area[np.isin(game_area, floor)] = 4
+        game_area[game_area == block_bonus] = 5
         game_area[np.isin(game_area, bonus)] = 6
         return game_area
 
@@ -107,7 +108,6 @@ class Environment:
             direction = self.action_direction[actions[0]]
             jump = self.action_jump[actions[1]]
 
-
             if direction != self.previous_direction:
                 # Release the previous direction
                 end_action = self.pair_actions[str(self.previous_direction)]
@@ -116,8 +116,7 @@ class Environment:
 
             self.pyboy.send_input(direction)
             self.pyboy.send_input(jump)
-
-            for ministeps in range(5):
+            for ministeps in range(6):
                 self.pyboy.tick()
 
         else:
